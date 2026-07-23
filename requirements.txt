@@ -1,6 +1,6 @@
 pyTelegramBotAPI
-APScheduler
+Flask
+requests
+pytz
 SpeechRecognition
 pydub
-Flask
-pytz
