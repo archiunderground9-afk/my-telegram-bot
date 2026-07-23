@@ -10,17 +10,17 @@ import telebot
 import speech_recognition as sr
 import pydub
 
-# 1. Настройка часового пояса (Москва GMT+3)
+# 1. Часовой пояс (Москва GMT+3)
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 def get_moscow_now():
     return datetime.datetime.now(MOSCOW_TZ)
 
 # 2. Токен бота
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8829968340:AAEL-zQ37tWtHYJdzxYE3bSqjGvLcVSJ9T0')
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'ВАШ_ТОКЕН_ЗДЕСЬ')
 bot = telebot.TeleBot(TOKEN)
 
-# 3. Веб-сервер Flask + Keep-Alive (чтобы Render не отключал и не "усыплял" бота)
+# 3. Веб-сервер Flask + Keep-Alive для Render
 app = Flask(__name__)
 
 @app.route('/')
@@ -28,7 +28,7 @@ def home():
     return "🤖 Telegram Bot с таймерами и планировщиком работает 24/7!"
 
 def keep_alive():
-    """Пингует сам себя каждые 10 минут, чтобы бесплатный Render не засыпал"""
+    """Пингует сам себя каждые 10 минут, чтобы Render не засыпал"""
     time.sleep(15)
     while True:
         try:
@@ -36,8 +36,8 @@ def keep_alive():
             if render_url:
                 requests.get(render_url)
         except Exception as e:
-            print(f"Keep-alive error: {e}")
-        time.sleep(600)  # каждые 10 минут
+            print(f"Keep-alive status: {e}")
+        time.sleep(600)
 
 # 4. Функция отправки напоминания
 def send_reminder(chat_id, task_text):
@@ -47,11 +47,11 @@ def send_reminder(chat_id, task_text):
             f"⏰ **НАПОМИНАНИЕ!**\n\n📌 {task_text}\n\n✅ Время пришло!",
             parse_mode='Markdown'
         )
-        print(f"Успешно отправлено напоминание в чат {chat_id}: {task_text}")
+        print(f"Отправлено в чат {chat_id}: {task_text}")
     except Exception as e:
-        print(f"Ошибка отправки сообщения: {e}")
+        print(f"Ошибка отправки: {e}")
 
-# 5. Функция разбора времени и запуска таймера
+# 5. Разбор времени и запуск таймера
 def parse_and_schedule(chat_id, text):
     now = get_moscow_now()
     delay_seconds = 0
@@ -79,7 +79,7 @@ def parse_and_schedule(chat_id, text):
             hour, minute = int(time_match.group(1)), int(time_match.group(2))
             target_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if target_dt <= now:
-                target_dt += datetime.timedelta(days=1)  # Перенос на завтра
+                target_dt += datetime.timedelta(days=1)
             
             delay_seconds = (target_dt - now).total_seconds()
             task_text = re.sub(r'напомни|в\s+\d{1,2}:\d{2}', '', text, flags=re.IGNORECASE).strip()
@@ -91,7 +91,7 @@ def parse_and_schedule(chat_id, text):
         bot.send_message(
             chat_id,
             "⚠️ **Не удалось распознать время напоминания!**\n\n"
-            "**Суть ошибки:** В команде нет времени.\n\n"
+            "**Суть ошибки:** В команде не найдено время.\n\n"
             "**Примеры:**\n"
             "• *напомни через 30 секунд позвонить Роману*\n"
             "• *напомни в 18:30 купить хлеб*",
@@ -127,8 +127,7 @@ def send_welcome(message):
         "💡 **Примеры:**\n"
         "• *напомни через 30 секунд позвонить Роману*\n"
         "• *напомни в 18:30 сходить в магазин*\n"
-        "• Голосовое сообщение: нажми микрофон и скажи команду!\n\n"
-        "Нажми кнопку **меню**, чтобы открыть веб-приложение!",
+        "• Голосовое сообщение: нажми микрофон и скажи команду!",
         parse_mode='Markdown'
     )
 
@@ -180,5 +179,10 @@ if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port), daemon=True).start()
     threading.Thread(target=keep_alive, daemon=True).start()
 
-    print("🚀 Бот 24/7 с таймерами запущен...")
-    bot.infinity_polling()
+    print("🚀 Очищаем вебхуки и запускаем бота...")
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Webhook remove note: {e}")
+
+    bot.infinity_polling(skip_pending=True)
