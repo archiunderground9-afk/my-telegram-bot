@@ -1,57 +1,83 @@
 import os
 import re
 import datetime
+import threading
+from flask import Flask
+import pytz
 import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 import speech_recognition as sr
 import pydub
 
-# 1. Токен бота (получен у @BotFather)
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'ВАШ_ТОКЕН_ОТ_BOTFATHER')
+# 1. Настройка часового пояса (Москва GMT+3)
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+
+def get_now():
+    return datetime.datetime.now(MOSCOW_TZ)
+
+# 2. Токен бота
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8829968340:AAEL-zQ37tWtHYJdzxYE3bSqjGvLcVSJ9T0')
 bot = telebot.TeleBot(TOKEN)
 
-# 2. Инициализация фонового планировщика (Календарь / Таймеры)
-scheduler = BackgroundScheduler()
+# 3. Микро-сервер Flask для Render (чтобы Render не отключал бота)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Telegram Bot is running 24/7!"
+
+def run_flask():
+    port = int(os.getenv('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# 4. Инициализация фонового планировщика
+scheduler = BackgroundScheduler(timezone=MOSCOW_TZ)
 scheduler.start()
 
 def send_reminder(chat_id, task_text):
-    """Функция срабатывания напоминания в точное время"""
+    """Функция отправки напоминания пользователю"""
     try:
         bot.send_message(
             chat_id,
-            f"⏰ **НАПОМИНАНИЕ!**\n\n📌 {task_text}\n\n✅ Время пришло!"
+            f"⏰ **НАПОМИНАНИЕ!**
+
+📌 {task_text}
+
+✅ Время пришло!"
         )
     except Exception as e:
-        print(f"Ошибка отправки: {e}")
+        print(f"Ошибка отправки уведомления: {e}")
 
 def parse_time_and_task(text):
-    """Разбор даты, времени и текста задачи из текста или голосового сообщения"""
-    now = datetime.datetime.now()
+    """Разбор даты/времени с учетом часового пояса МСК"""
+    now = get_now()
     
-    # 1. Формат 'через N минут/часов/дней'
-    rel_match = re.search(r'через\s+(\d+)\s+(минут|мин|часов|час|ч|дней|день|д)', text, re.IGNORECASE)
+    # 1. Формат: 'через N секунд/минут/часов/дней'
+    rel_match = re.search(r'черезs+(d+)s+(секунд|сек|с|минут|мин|часов|час|ч|дней|день|д)', text, re.IGNORECASE)
     if rel_match:
         num = int(rel_match.group(1))
         unit = rel_match.group(2).lower()
-        if 'мин' in unit:
+        if 'сек' in unit or unit == 'с':
+            rem_time = now + datetime.timedelta(seconds=num)
+        elif 'мин' in unit:
             rem_time = now + datetime.timedelta(minutes=num)
         elif 'час' in unit or unit == 'ч':
             rem_time = now + datetime.timedelta(hours=num)
         else:
             rem_time = now + datetime.timedelta(days=num)
         
-        task_text = re.sub(r'напомни|через\s+\d+\s+(минут|мин|часов|час|ч|дней|день|д)', '', text, flags=re.IGNORECASE).strip()
+        task_text = re.sub(r'напомни|черезs+d+s+(секунд|сек|с|минут|мин|часов|час|ч|дней|день|д)', '', text, flags=re.IGNORECASE).strip()
         return rem_time, task_text or "Напоминание"
 
-    # 2. Формат 'в HH:MM' (например 'в 18:30')
-    time_match = re.search(r'в\s+(\d{1,2}):(\d{2})', text, re.IGNORECASE)
+    # 2. Формат: 'в HH:MM' (например 'в 18:01')
+    time_match = re.search(r'вs+(d{1,2}):(d{2})', text, re.IGNORECASE)
     if time_match:
         hour, minute = int(time_match.group(1)), int(time_match.group(2))
         rem_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if rem_time <= now:
-            rem_time += datetime.timedelta(days=1)  # Переносим на завтра, если время сегодня уже прошло
+            rem_time += datetime.timedelta(days=1)  # Перенос на завтра, если время прошло
         
-        task_text = re.sub(r'напомни|в\s+\d{1,2}:\d{2}', '', text, flags=re.IGNORECASE).strip()
+        task_text = re.sub(r'напомни|вs+d{1,2}:d{2}', '', text, flags=re.IGNORECASE).strip()
         return rem_time, task_text or "Напоминание"
 
     return None, None
@@ -60,15 +86,21 @@ def parse_time_and_task(text):
 def send_welcome(message):
     bot.reply_to(
         message,
-        "👋 Привет! Я твой умный бот-помощник с календарем и голосовым вводом.\n\n"
-        "💡 **Как давать команды:**\n"
-        "• Текстом: 'напомни через 5 минут позвонить Ивану'\n"
-        "• Текстом: 'напомни в 18:30 сходить в магазин'\n"
-        "• Голосом: просто нажми микрофон и скажи команду!\n\n"
-        "Нажми кнопку **меню** снизу, чтобы открыть Веб-приложение!"
+        "👋 Привет! Я твой умный бот-помощник с планировщиком и голосовым вводом.
+
+"
+        "💡 **Примеры команд:**
+"
+        "• 'напомни через 30 секунд позвонить Роману'
+"
+        "• 'напомни в 18:30 купить хлеб'
+"
+        "• Голосовое сообщение: нажми микрофон и скажи команду!
+
+"
+        "Нажми кнопку **меню**, чтобы открыть веб-приложение!"
     )
 
-# 3. Обработка голосовых сообщений
 @bot.message_handler(content_types=['voice'])
 def handle_voice(message):
     chat_id = message.chat.id
@@ -84,32 +116,32 @@ def handle_voice(message):
         with open(ogg_path, 'wb') as new_file:
             new_file.write(downloaded_file)
             
-        # Конвертация OGG в WAV
         sound = pydub.AudioSegment.from_file(ogg_path)
         sound.export(wav_path, format="wav")
         
-        # Распознавание речи через Google Speech API
         recognizer = sr.Recognizer()
         with sr.AudioFile(wav_path) as source:
             audio = recognizer.record(source)
             text = recognizer.recognize_google(audio, language="ru-RU")
             
-        # Удаляем временные файлы
         if os.path.exists(ogg_path): os.remove(ogg_path)
         if os.path.exists(wav_path): os.remove(wav_path)
         
-        bot.send_message(chat_id, f"🗣️ Вы сказали: «{text}»")
+        bot.send_message(chat_id, f"🗣️ Распознано: «{text}»")
         process_task_command(chat_id, text)
 
     except Exception as e:
         bot.send_message(
             chat_id,
-            "⚠️ **Ошибка распознавания речи!**\n\n"
-            f"Суть ошибки: {str(e) or 'Голос не распознан или записи нет.'}\n\n"
-            "Пожалуйста, повторите голосовую команду чётче или отправьте текстом!"
+            "⚠️ **Ошибка распознавания речи!**
+
+"
+            f"Суть ошибки: {str(e) or 'Речь не распознана.'}
+
+"
+            "Пожалуйста, повторите чётче или отправьте текстом!"
         )
 
-# 4. Обработка текстовых сообщений
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     process_task_command(message.chat.id, message.text)
@@ -120,14 +152,16 @@ def process_task_command(chat_id, text):
     if not rem_time:
         bot.send_message(
             chat_id,
-            "⚠️ **Не удалось установить время напоминания.**\n\n"
-            "**Суть ошибки:** В вашей команде не указано точное время (например: 'через 10 минут', 'в 19:00' или 'через 1 день').\n\n"
-            "**Попробуйте повторить команду:**\n"
-            "👉 *напомни через 15 минут купить хлеб*"
+            "⚠️ **Не удалось разобрать время.**
+
+"
+            "**Суть ошибки:** В команде не найдено время ('через 30 секунд', 'в 18:30').
+
+"
+            "**Пример:** *напомни через 1 минуту позвонить Роману*"
         )
         return
         
-    # Добавляем задачу в календарь планировщика
     scheduler.add_job(
         send_reminder,
         'date',
@@ -135,13 +169,19 @@ def process_task_command(chat_id, text):
         args=[chat_id, task_text]
     )
     
-    formatted_time = rem_time.strftime("%d.%m.%Y в %H:%M")
+    formatted_time = rem_time.strftime("%d.%m.%Y в %H:%M:%S")
     bot.send_message(
         chat_id,
-        f"✅ **Напоминание запланировано!**\n\n"
-        f"📌 Задача: {task_text}\n"
-        f"⏰ Время: {formatted_time}"
+        f"✅ **Напоминание запланировано!**
+
+"
+        f"📌 Задача: {task_text}
+"
+        f"⏰ Точное время (МСК): {formatted_time}"
     )
 
-print("🚀 Бот с планировщиком и голосовым вводом запущен...")
-bot.infinity_polling()
+if __name__ == "__main__":
+    # Запускаем Flask в отдельном потоке для Render Keep-Alive
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("🚀 Бот и HTTP-сервер 24/7 запущены...")
+    bot.infinity_polling()
